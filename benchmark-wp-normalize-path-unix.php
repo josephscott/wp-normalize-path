@@ -1043,11 +1043,12 @@ echo "  - 33% Unix paths with multiple slashes (need normalization)\n";
 echo "  - 17% PHP stream wrappers\n";
 echo "\n";
 echo "Variants being tested:\n";
-echo "  Original = Current WordPress (regex-based, no cache) - BASELINE\n";
-echo "  Simple   = Single array cache, stores key=>value (fastest, most memory)\n";
-echo "  Compact  = Simple + stores true when unchanged (original compact approach)\n";
-echo "  Best     = Recommended: compact with single-lookup optimization\n";
-echo "  Dennis   = Regex-free implementation (no cache)\n";
+echo "  Original  = Current WordPress (regex-based, no cache) - BASELINE\n";
+echo "  Simple    = Single array cache, stores key=>value (fastest, most memory)\n";
+echo "  Compact   = Simple + stores true when unchanged (original compact approach)\n";
+echo "  Best      = Recommended: compact with single-lookup optimization\n";
+echo "  Segmented = Hot/warm two-tier cache (bounded memory)\n";
+echo "  Dennis    = Regex-free implementation (no cache)\n";
 echo "$line\n\n";
 
 $steps = array( 1000, 2000, 4000 );
@@ -1060,28 +1061,32 @@ foreach ( $steps as $count ) {
 	$paths  = generate_paths( $count );
 	$unique = count( array_unique( $paths ) );
 
-	$bench_original = benchmark( 'wp_normalize_path_original', $paths );
-	$bench_simple   = benchmark( 'wp_normalize_path_simple', $paths );
-	$bench_compact  = benchmark( 'wp_normalize_path_simple_compact', $paths );
-	$bench_best     = benchmark( 'wp_normalize_path_best', $paths );
-	$bench_dennis   = benchmark( 'wp_normalize_path_dennis', $paths );
+	$bench_original  = benchmark( 'wp_normalize_path_original', $paths );
+	$bench_simple    = benchmark( 'wp_normalize_path_simple', $paths );
+	$bench_compact   = benchmark( 'wp_normalize_path_simple_compact', $paths );
+	$bench_best      = benchmark( 'wp_normalize_path_best', $paths );
+	$bench_segmented = benchmark( 'wp_normalize_path_segmented', $paths );
+	$bench_dennis    = benchmark( 'wp_normalize_path_dennis', $paths );
 
 	// Get cache stats
-	$simple_stats  = wp_normalize_path_simple( '__cache_stats__' );
-	$compact_stats = wp_normalize_path_simple_compact( '__cache_stats__' );
-	$best_stats    = wp_normalize_path_best( '__cache_stats__' );
+	$simple_stats    = wp_normalize_path_simple( '__cache_stats__' );
+	$compact_stats   = wp_normalize_path_simple_compact( '__cache_stats__' );
+	$best_stats      = wp_normalize_path_best( '__cache_stats__' );
+	$segmented_stats = wp_normalize_path_segmented( '__cache_stats__' );
 
 	$results[] = array(
-		'count'        => $count,
-		'unique'       => $unique,
-		'original'     => $bench_original,
-		'simple'       => $bench_simple,
-		'compact'      => $bench_compact,
-		'best'         => $bench_best,
-		'dennis'       => $bench_dennis,
-		'simple_stats' => $simple_stats,
-		'compact_stats'=> $compact_stats,
-		'best_stats'   => $best_stats,
+		'count'          => $count,
+		'unique'         => $unique,
+		'original'       => $bench_original,
+		'simple'         => $bench_simple,
+		'compact'        => $bench_compact,
+		'best'           => $bench_best,
+		'segmented'      => $bench_segmented,
+		'dennis'         => $bench_dennis,
+		'simple_stats'   => $simple_stats,
+		'compact_stats'  => $compact_stats,
+		'best_stats'     => $best_stats,
+		'segmented_stats'=> $segmented_stats,
 	);
 }
 
@@ -1089,19 +1094,20 @@ echo "$line\n";
 echo "RESULTS (times in milliseconds)\n";
 echo "$line\n\n";
 
-printf( "%-6s  %-6s  %-10s  %-10s  %-10s  %-10s  %-10s\n",
-	'Paths', 'Unique', 'Original', 'Simple', 'Compact', 'Best', 'Dennis'
+printf( "%-6s  %-6s  %-8s  %-8s  %-8s  %-8s  %-9s  %-8s\n",
+	'Paths', 'Unique', 'Original', 'Simple', 'Compact', 'Best', 'Segmented', 'Dennis'
 );
-echo str_repeat( '-', 70 ) . "\n";
+echo str_repeat( '-', 78 ) . "\n";
 
 foreach ( $results as $r ) {
-	printf( "%-6d  %-6d  %-10.3f  %-10.3f  %-10.3f  %-10.3f  %-10.3f\n",
+	printf( "%-6d  %-6d  %-8.3f  %-8.3f  %-8.3f  %-8.3f  %-9.3f  %-8.3f\n",
 		$r['count'],
 		$r['unique'],
 		$r['original'],
 		$r['simple'],
 		$r['compact'],
 		$r['best'],
+		$r['segmented'],
 		$r['dennis']
 	);
 }
@@ -1110,44 +1116,51 @@ echo "\n$line\n";
 echo "SPEED COMPARISON VS ORIGINAL (positive = faster)\n";
 echo "$line\n\n";
 
-printf( "%-6s  %-16s  %-16s  %-16s  %-16s\n",
-	'Paths', 'Simple', 'Compact', 'Best', 'Dennis'
+printf( "%-6s  %-12s  %-12s  %-12s  %-12s  %-12s\n",
+	'Paths', 'Simple', 'Compact', 'Best', 'Segmented', 'Dennis'
 );
-echo str_repeat( '-', 72 ) . "\n";
+echo str_repeat( '-', 78 ) . "\n";
 
 foreach ( $results as $r ) {
-	$simple_pct  = ( ( $r['original'] - $r['simple'] ) / $r['original'] ) * 100;
-	$compact_pct = ( ( $r['original'] - $r['compact'] ) / $r['original'] ) * 100;
-	$best_pct    = ( ( $r['original'] - $r['best'] ) / $r['original'] ) * 100;
-	$dennis_pct  = ( ( $r['original'] - $r['dennis'] ) / $r['original'] ) * 100;
+	$simple_pct    = ( ( $r['original'] - $r['simple'] ) / $r['original'] ) * 100;
+	$compact_pct   = ( ( $r['original'] - $r['compact'] ) / $r['original'] ) * 100;
+	$best_pct      = ( ( $r['original'] - $r['best'] ) / $r['original'] ) * 100;
+	$segmented_pct = ( ( $r['original'] - $r['segmented'] ) / $r['original'] ) * 100;
+	$dennis_pct    = ( ( $r['original'] - $r['dennis'] ) / $r['original'] ) * 100;
 
-	printf( "%-6d  %+.1f%% faster    %+.1f%% faster    %+.1f%% faster    %+.1f%%\n",
+	printf( "%-6d  %+.1f%%        %+.1f%%        %+.1f%%        %+.1f%%        %+.1f%%\n",
 		$r['count'],
 		$simple_pct,
 		$compact_pct,
 		$best_pct,
+		$segmented_pct,
 		$dennis_pct
 	);
 }
 
 echo "\n$line\n";
-echo "CACHE MEMORY USAGE (all experiments use compact storage)\n";
+echo "CACHE MEMORY USAGE\n";
 echo "$line\n\n";
 
-printf( "%-6s  %-6s  %-14s  %-14s  %-14s\n", 'Paths', 'Unique', 'Simple', 'Compact/Exp*', 'Savings' );
-echo str_repeat( '-', 60 ) . "\n";
+printf( "%-6s  %-6s  %-14s  %-14s  %-20s\n", 'Paths', 'Unique', 'Simple', 'Best/Compact', 'Segmented' );
+echo str_repeat( '-', 70 ) . "\n";
 
 foreach ( $results as $r ) {
-	$simple_mem  = $r['simple_stats']['memory'];
-	$compact_mem = $r['compact_stats']['memory'];
-	$savings_pct = ( ( $simple_mem - $compact_mem ) / $simple_mem ) * 100;
+	$simple_mem    = $r['simple_stats']['memory'];
+	$compact_mem   = $r['compact_stats']['memory'];
+	$segmented_mem = $r['segmented_stats']['memory'];
 
-	printf( "%-6d  %-6d  %-14s  %-14s  %-14s\n",
+	$seg_info = sprintf( '%d @ %s',
+		$r['segmented_stats']['count'],
+		format_bytes( $segmented_mem )
+	);
+
+	printf( "%-6d  %-6d  %-14s  %-14s  %-20s\n",
 		$r['count'],
 		$r['unique'],
 		format_bytes( $simple_mem ),
 		format_bytes( $compact_mem ),
-		sprintf( '%.1f%% less', $savings_pct )
+		$seg_info
 	);
 }
 
@@ -1157,14 +1170,16 @@ echo "\n$line\n";
 echo "FINAL COMPARISON (at " . $last['count'] . " paths)\n";
 echo "$line\n\n";
 
-$simple_speed  = ( ( $last['original'] - $last['simple'] ) / $last['original'] ) * 100;
-$compact_speed = ( ( $last['original'] - $last['compact'] ) / $last['original'] ) * 100;
-$best_speed    = ( ( $last['original'] - $last['best'] ) / $last['original'] ) * 100;
-$dennis_speed  = ( ( $last['original'] - $last['dennis'] ) / $last['original'] ) * 100;
+$simple_speed    = ( ( $last['original'] - $last['simple'] ) / $last['original'] ) * 100;
+$compact_speed   = ( ( $last['original'] - $last['compact'] ) / $last['original'] ) * 100;
+$best_speed      = ( ( $last['original'] - $last['best'] ) / $last['original'] ) * 100;
+$segmented_speed = ( ( $last['original'] - $last['segmented'] ) / $last['original'] ) * 100;
+$dennis_speed    = ( ( $last['original'] - $last['dennis'] ) / $last['original'] ) * 100;
 
-$simple_mem  = $last['simple_stats']['memory'];
-$compact_mem = $last['compact_stats']['memory'];
-$best_mem    = $last['best_stats']['memory'];
+$simple_mem    = $last['simple_stats']['memory'];
+$compact_mem   = $last['compact_stats']['memory'];
+$best_mem      = $last['best_stats']['memory'];
+$segmented_mem = $last['segmented_stats']['memory'];
 
 $mem_savings = ( ( $simple_mem - $best_mem ) / $simple_mem ) * 100;
 $speed_cost  = ( ( $last['best'] - $last['simple'] ) / $last['simple'] ) * 100;
@@ -1175,18 +1190,19 @@ printf( "%-10s  %-12.3f  %-14s  %-18s\n", 'Original', $last['original'], 'N/A (n
 printf( "%-10s  %-12.3f  %-14s  %+.1f%% faster\n", 'Simple', $last['simple'], format_bytes( $simple_mem ), $simple_speed );
 printf( "%-10s  %-12.3f  %-14s  %+.1f%% faster\n", 'Compact', $last['compact'], format_bytes( $compact_mem ), $compact_speed );
 printf( "%-10s  %-12.3f  %-14s  %+.1f%% faster\n", 'Best', $last['best'], format_bytes( $best_mem ), $best_speed );
+printf( "%-10s  %-12.3f  %-14s  %+.1f%%\n", 'Segmented', $last['segmented'], format_bytes( $segmented_mem ), $segmented_speed );
 printf( "%-10s  %-12.3f  %-14s  %+.1f%%\n", 'Dennis', $last['dennis'], 'N/A (no cache)', $dennis_speed );
 
 echo "\n";
 echo "CONCLUSION:\n";
 echo str_repeat( '-', 58 ) . "\n";
-echo "  Simple:  Maximum speed (" . sprintf( '+%.0f%%', $simple_speed ) . "), highest memory (" . format_bytes( $simple_mem ) . ")\n";
-echo "  Best:    Balanced (" . sprintf( '+%.0f%%', $best_speed ) . " speed, " . sprintf( '%.0f%%', $mem_savings ) . " less memory)\n";
-echo "  Dennis:  No cache (" . sprintf( '%+.0f%%', $dennis_speed ) . "), no memory overhead\n";
+echo "  Simple:    Maximum speed (" . sprintf( '+%.0f%%', $simple_speed ) . "), highest memory (" . format_bytes( $simple_mem ) . ")\n";
+echo "  Best:      Balanced (" . sprintf( '+%.0f%%', $best_speed ) . " speed, " . sprintf( '%.0f%%', $mem_savings ) . " less memory)\n";
+echo "  Segmented: Bounded memory (" . format_bytes( $segmented_mem ) . "), max " . $last['segmented_stats']['max_per_tier'] . " entries/tier\n";
+echo "  Dennis:    No cache (" . sprintf( '%+.0f%%', $dennis_speed ) . "), no memory overhead\n";
 echo "\n";
 echo "  The 'Best' implementation trades ~" . sprintf( '%.0f%%', $speed_cost ) . " speed for ~" . sprintf( '%.0f%%', $mem_savings ) . " memory savings.\n";
-echo "  In Unix environments where most paths are already normalized, this is\n";
-echo "  a good trade-off for memory-constrained systems.\n";
+echo "  Segmented provides hard memory bounds but loses speed due to cache evictions.\n";
 
 echo "\n$line\n";
 echo "Benchmark complete.\n";
